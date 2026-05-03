@@ -361,6 +361,17 @@ private:
 	float				m_flTimeNextLadderHint;	// Next time we're eligible to display a HUD hint about a ladder.
 	
 	friend class CHL2GameMovement;
+
+	// Rope attachment
+	void	AttachToRope( class CEnvRope *pRope, int gripNode );
+	void	DetachFromRope( bool bJump );
+	void	RopeMove( CUserCmd *ucmd );
+	class CEnvRope *FindNearestRope();
+
+	bool	m_bOnRope;
+	EHANDLE	m_hRope;
+	int		m_iGripNode;
+	float	m_flNextClimbTime;
 };
 
 

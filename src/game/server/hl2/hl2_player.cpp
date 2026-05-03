@@ -46,6 +46,7 @@
 #include "gamestats.h"
 #include "filters.h"
 #include "tier0/icommandline.h"
+#include "hl2/env_rope.h"
 
 #ifdef HL2_EPISODIC
 #include "npc_alyx_episodic.h"
@@ -389,6 +390,10 @@ CHL2_Player::CHL2_Player()
 
 	m_flArmorReductionTime = 0.0f;
 	m_iArmorReductionFrom = 0;
+
+	m_bOnRope       = false;
+	m_iGripNode     = 0;
+	m_flNextClimbTime = 0.0f;
 }
 
 //
@@ -1105,8 +1110,125 @@ bool CHL2_Player::HandleInteraction(int interactionType, void *data, CBaseCombat
 }
 
 
+CEnvRope *CHL2_Player::FindNearestRope()
+{
+	CEnvRope *pBest    = NULL;
+	float     bestDist = FLT_MAX;
+	Vector    playerMid = GetAbsOrigin() + Vector( 0, 0, 36 );
+
+	CBaseEntity *pEnt = NULL;
+	while ( ( pEnt = gEntList.FindEntityByClassname( pEnt, "env_rope" ) ) != NULL )
+	{
+		CEnvRope *pRope = static_cast<CEnvRope *>( pEnt );
+		float radius = pRope->GetAttachRadius();
+
+		// Check each node for proximity
+		for ( int i = 1; i < pRope->GetNodeCount(); i++ )
+		{
+			float dist = ( pRope->GetNodePos( i ) - playerMid ).Length();
+			if ( dist < radius && dist < bestDist )
+			{
+				bestDist = dist;
+				pBest    = pRope;
+				m_iGripNode = i;
+			}
+		}
+	}
+	return pBest;
+}
+
+void CHL2_Player::AttachToRope( CEnvRope *pRope, int gripNode )
+{
+	m_bOnRope     = true;
+	m_hRope       = pRope;
+	m_iGripNode   = gripNode;
+	m_flNextClimbTime = 0.0f;
+
+	SetMoveType( MOVETYPE_NONE );
+	SetAbsVelocity( vec3_origin );
+}
+
+void CHL2_Player::DetachFromRope( bool bJump )
+{
+	if ( bJump )
+	{
+		CEnvRope *pRope = static_cast<CEnvRope *>( m_hRope.Get() );
+		if ( pRope )
+		{
+			// Launch player with the rope's swing velocity
+			Vector ropeVel = pRope->GetNodeVelocity( m_iGripNode );
+			ropeVel.z = MAX( ropeVel.z, 200.0f ); // guarantee some upward pop
+			SetAbsVelocity( ropeVel );
+		}
+	}
+
+	m_bOnRope = false;
+	m_hRope   = NULL;
+	SetMoveType( MOVETYPE_WALK );
+}
+
+void CHL2_Player::RopeMove( CUserCmd *ucmd )
+{
+	CEnvRope *pRope = static_cast<CEnvRope *>( m_hRope.Get() );
+	if ( !pRope )
+	{
+		DetachFromRope( false );
+		return;
+	}
+
+	// Detach on jump
+	if ( ucmd->buttons & IN_JUMP )
+	{
+		DetachFromRope( true );
+		return;
+	}
+
+	// Climb up (forward input, toward anchor)
+	if ( ucmd->forwardmove > 0 && gpGlobals->curtime >= m_flNextClimbTime )
+	{
+		if ( m_iGripNode > 1 )
+		{
+			m_iGripNode--;
+			m_flNextClimbTime = gpGlobals->curtime + 0.1f;
+		}
+	}
+	// Climb down (back input, away from anchor)
+	else if ( ucmd->forwardmove < 0 && gpGlobals->curtime >= m_flNextClimbTime )
+	{
+		if ( m_iGripNode < pRope->GetNodeCount() - 1 )
+		{
+			m_iGripNode++;
+			m_flNextClimbTime = gpGlobals->curtime + 0.1f;
+		}
+	}
+
+	// Swing — apply lateral impulse at the grip node
+	if ( ucmd->sidemove != 0 )
+	{
+		Vector right, forward, up;
+		AngleVectors( pl.v_angle, &forward, &right, &up );
+		float swingForce = ucmd->sidemove * 4.0f * TICK_INTERVAL;
+		pRope->ApplyNodeImpulse( m_iGripNode, right * swingForce );
+	}
+
+	// Lock player position: eye level at grip node
+	Vector gripPos = pRope->GetNodePos( m_iGripNode );
+	SetAbsOrigin( gripPos - Vector( 0, 0, 60 ) );
+	SetAbsVelocity( vec3_origin );
+}
+
 void CHL2_Player::PlayerRunCommand(CUserCmd *ucmd, IMoveHelper *moveHelper)
 {
+	// Rope movement — handle before everything else
+	if ( m_bOnRope )
+	{
+		RopeMove( ucmd );
+		ucmd->forwardmove = 0;
+		ucmd->sidemove    = 0;
+		ucmd->upmove      = 0;
+		ucmd->buttons    &= ~( IN_JUMP | IN_DUCK );
+	}
+
 	// Handle FL_FROZEN.
 	if ( m_afPhysicsFlags & PFLAG_ONBARNACLE )
 	{
@@ -2868,6 +2990,23 @@ void CHL2_Player::PlayerUse ( void )
 		// Something has temporarily stopped us being able to USE things.
 		// Obviously, this should be used very carefully.(sjb)
 		return;
+	}
+
+	// Rope grab / release
+	if ( m_afButtonPressed & IN_USE )
+	{
+		if ( m_bOnRope )
+		{
+			DetachFromRope( false );
+			return;
+		}
+
+		CEnvRope *pRope = FindNearestRope();
+		if ( pRope )
+		{
+			AttachToRope( pRope, m_iGripNode );
+			return;
+		}
 	}
 
 	CBaseEntity *pUseEntity = FindUseEntity();

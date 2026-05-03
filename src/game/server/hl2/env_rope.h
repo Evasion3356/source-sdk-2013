@@ -17,6 +17,19 @@ public:
 	void Think() override;
 	int  UpdateTransmitState() override;
 
+	// Player attachment interface
+	int    GetNodeCount()      const { return m_nActiveNodes; }
+	float  GetSegmentLength()  const { return m_flSegmentLength; }
+	float  GetAttachRadius()   const { return m_flAttachRadius; }
+	Vector GetNodePos( int i ) const { return m_vecNodes[i]; }
+	Vector GetNodeVelocity( int i ) const { return ( m_vecNodes[i] - m_vecPrevNodes[i] ) / TICK_INTERVAL; }
+	void   ApplyNodeImpulse( int i, const Vector &impulse )
+	{
+		if ( i <= 0 || i >= m_nActiveNodes )
+			return;
+		m_vecNodes.Set( i, m_vecNodes[i] + impulse );
+	}
+
 private:
 	void InitNodes();
 	void StepVerlet();
