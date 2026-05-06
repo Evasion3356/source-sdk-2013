@@ -4,7 +4,8 @@
 
 #include "baseentity.h"
 
-#define ROPE_MAX_NODES 16
+#define ROPE_MAX_NODES          16
+#define ROPE_CONSTRAINT_ITERS   10
 
 class CEnvRope : public CBaseEntity
 {
@@ -23,26 +24,37 @@ public:
 	float  GetAttachRadius()   const { return m_flAttachRadius; }
 	Vector GetNodePos( int i ) const { return m_vecNodes[i]; }
 	Vector GetNodeVelocity( int i ) const { return ( m_vecNodes[i] - m_vecPrevNodes[i] ) / TICK_INTERVAL; }
+	static constexpr float MAX_SWING_SPEED = 8.0f; // ~530 u/s at 66 tick
+
 	void   ApplyNodeImpulse( int i, const Vector &impulse )
 	{
 		if ( i <= 0 || i >= m_nActiveNodes )
 			return;
-		Vector newPos = m_vecNodes[i] + impulse;
-		// Clamp node velocity (pos - prev) so the rope can't exceed MAX_SWING_SPEED u/tick
-		static const float MAX_SWING_SPEED = 15.0f; // ~990 u/s at 66 tick
-		Vector vel = newPos - m_vecPrevNodes[i];
+		// Modify prev (not pos) so velocity builds over multiple Verlet steps.
+		Vector vel = m_vecNodes[i] - m_vecPrevNodes[i];
+		vel += impulse;
 		if ( vel.Length() > MAX_SWING_SPEED )
-			newPos = m_vecPrevNodes[i] + vel.Normalized() * MAX_SWING_SPEED;
-		m_vecNodes.Set( i, newPos );
+			vel = vel.Normalized() * MAX_SWING_SPEED;
+		m_vecPrevNodes[i] = m_vecNodes[i] - vel;
 	}
-	// Teleport a node to a new position and zero its Verlet velocity.
-	// Used to pull the grip node back when the player is stopped by geometry.
-	void   SnapNodeTo( int i, const Vector &pos )
+	void   ZeroNodeVelocity( int i )
+	{
+		if ( i < 0 || i >= m_nActiveNodes ) return;
+		m_vecPrevNodes[i] = m_vecNodes[i];
+	}
+	// Snap a node to a new position, stripping the velocity component going into
+	// the surface (wallNormal) while preserving tangential velocity.
+	void   SnapNodeTo( int i, const Vector &pos, const Vector &wallNormal )
 	{
 		if ( i <= 0 || i >= m_nActiveNodes )
 			return;
+		Vector vel = m_vecNodes[i] - m_vecPrevNodes[i];
+		// Remove only the component driving the node into the surface
+		float dot = vel.Dot( wallNormal );
+		if ( dot < 0.0f )
+			vel -= wallNormal * dot;
 		m_vecNodes.Set( i, pos );
-		m_vecPrevNodes[i] = pos;
+		m_vecPrevNodes[i] = pos - vel;
 	}
 
 private:

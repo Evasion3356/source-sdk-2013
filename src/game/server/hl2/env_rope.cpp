@@ -85,12 +85,12 @@ void CEnvRope::StepVerlet()
 
 void CEnvRope::SolveConstraints()
 {
-	// Pin the anchor node
-	m_vecNodes.Set( 0, GetAbsOrigin() );
-	m_vecPrevNodes[0] = GetAbsOrigin();
-
-	for ( int iter = 0; iter < 4; iter++ )
+	for ( int iter = 0; iter < ROPE_CONSTRAINT_ITERS; iter++ )
 	{
+		// Re-pin the anchor at the start of every pass so no interior correction
+		// can accumulate drift in node 0 over successive iterations.
+		m_vecNodes.Set( 0, GetAbsOrigin() );
+
 		for ( int i = 0; i < m_nActiveNodes - 1; i++ )
 		{
 			Vector posA = m_vecNodes[i];
@@ -101,20 +101,26 @@ void CEnvRope::SolveConstraints()
 			if ( dist < 0.001f )
 				continue;
 
-			float diff = ( dist - m_flSegmentLength ) / dist;
+			float  diff       = ( dist - m_flSegmentLength ) / dist;
+			Vector correction = delta * diff;
 
 			if ( i == 0 )
 			{
-				// Anchor is fixed — only push B
-				m_vecNodes.Set( i + 1, posB - delta * diff );
+				// Anchor is fixed — only adjust the next node.
+				m_vecNodes.Set( 1, posB - correction );
 			}
 			else
 			{
-				m_vecNodes.Set( i,     posA + delta * diff * 0.5f );
-				m_vecNodes.Set( i + 1, posB - delta * diff * 0.5f );
+				// Both nodes are free — split the correction evenly.
+				m_vecNodes.Set( i,     posA + correction * 0.5f );
+				m_vecNodes.Set( i + 1, posB - correction * 0.5f );
 			}
 		}
 	}
+
+	// Final anchor pin; also zero its stored velocity so node 0 never drifts.
+	m_vecNodes.Set( 0, GetAbsOrigin() );
+	m_vecPrevNodes[0] = GetAbsOrigin();
 }
 
 void CEnvRope::Think()

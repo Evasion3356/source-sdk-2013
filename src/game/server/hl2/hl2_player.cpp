@@ -1215,6 +1215,13 @@ void CHL2_Player::RopeMove( CUserCmd *ucmd )
 			int newNode = m_iGripNode + climbDir;
 			if ( newNode >= 1 && newNode < pRope->GetNodeCount() )
 			{
+				// With the anchor→tip cascade, nodes below the new grip point carry
+				// their Verlet velocity and whip wildly once they're no longer gripped.
+				// Zero them so the rope settles cleanly after the transition.
+				int freeFrom = ( newNode < m_iGripNode ) ? m_iGripNode : newNode;
+				for ( int j = freeFrom; j < pRope->GetNodeCount(); j++ )
+					pRope->ZeroNodeVelocity( j );
+
 				m_iGripNode = newNode;
 				m_flNextClimbTime = gpGlobals->curtime + 0.1f;
 			}
@@ -1225,7 +1232,7 @@ void CHL2_Player::RopeMove( CUserCmd *ucmd )
 		// Swing mode — W/S push the rope forward or backward along the player's facing direction
 		if ( ucmd->forwardmove != 0 )
 		{
-			float swingForce = ucmd->forwardmove * 0.3f * TICK_INTERVAL;
+			float swingForce = ucmd->forwardmove * 0.10f * TICK_INTERVAL;
 			pRope->ApplyNodeImpulse( m_iGripNode, vecForward * swingForce );
 		}
 	}
@@ -1233,7 +1240,7 @@ void CHL2_Player::RopeMove( CUserCmd *ucmd )
 	// A/D always apply a lateral swing impulse
 	if ( ucmd->sidemove != 0 )
 	{
-		float swingForce = ucmd->sidemove * 0.3f * TICK_INTERVAL;
+		float swingForce = ucmd->sidemove * 0.10f * TICK_INTERVAL;
 		pRope->ApplyNodeImpulse( m_iGripNode, vecRight * swingForce );
 	}
 
@@ -1248,11 +1255,12 @@ void CHL2_Player::RopeMove( CUserCmd *ucmd )
 	SetAbsOrigin( tr.endpos );
 	SetAbsVelocity( vec3_origin );
 
-	// If blocked, snap the grip node back to where the player actually ended up.
-	// This stops the rope from pushing the player into the wall again next tick.
+	// Keep the rope node on the correct side of any surface the player hits.
+	// SnapNodeTo strips only the velocity component driving into the surface,
+	// preserving tangential velocity so pendulum momentum carries through.
 	if ( tr.fraction < 1.0f )
 	{
-		pRope->SnapNodeTo( m_iGripNode, tr.endpos + Vector( 0, 0, 60 ) );
+		pRope->SnapNodeTo( m_iGripNode, tr.endpos + Vector( 0, 0, 60 ), tr.plane.normal );
 	}
 }
 
