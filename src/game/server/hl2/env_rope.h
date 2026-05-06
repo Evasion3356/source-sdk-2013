@@ -27,7 +27,22 @@ public:
 	{
 		if ( i <= 0 || i >= m_nActiveNodes )
 			return;
-		m_vecNodes.Set( i, m_vecNodes[i] + impulse );
+		Vector newPos = m_vecNodes[i] + impulse;
+		// Clamp node velocity (pos - prev) so the rope can't exceed MAX_SWING_SPEED u/tick
+		static const float MAX_SWING_SPEED = 15.0f; // ~990 u/s at 66 tick
+		Vector vel = newPos - m_vecPrevNodes[i];
+		if ( vel.Length() > MAX_SWING_SPEED )
+			newPos = m_vecPrevNodes[i] + vel.Normalized() * MAX_SWING_SPEED;
+		m_vecNodes.Set( i, newPos );
+	}
+	// Teleport a node to a new position and zero its Verlet velocity.
+	// Used to pull the grip node back when the player is stopped by geometry.
+	void   SnapNodeTo( int i, const Vector &pos )
+	{
+		if ( i <= 0 || i >= m_nActiveNodes )
+			return;
+		m_vecNodes.Set( i, pos );
+		m_vecPrevNodes[i] = pos;
 	}
 
 private:

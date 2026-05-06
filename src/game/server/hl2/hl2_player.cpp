@@ -1112,9 +1112,12 @@ bool CHL2_Player::HandleInteraction(int interactionType, void *data, CBaseCombat
 
 CEnvRope *CHL2_Player::FindNearestRope()
 {
-	CEnvRope *pBest    = NULL;
-	float     bestDist = FLT_MAX;
-	Vector    playerMid = GetAbsOrigin() + Vector( 0, 0, 36 );
+	CEnvRope *pBest   = NULL;
+	float     bestDot = 0.0f; // only consider nodes in the forward hemisphere (dot > 0)
+
+	Vector eyePos = EyePosition();
+	Vector eyeDir;
+	AngleVectors( EyeAngles(), &eyeDir, NULL, NULL );
 
 	CBaseEntity *pEnt = NULL;
 	while ( ( pEnt = gEntList.FindEntityByClassname( pEnt, "env_rope" ) ) != NULL )
@@ -1122,14 +1125,19 @@ CEnvRope *CHL2_Player::FindNearestRope()
 		CEnvRope *pRope = static_cast<CEnvRope *>( pEnt );
 		float radius = pRope->GetAttachRadius();
 
-		// Check each node for proximity
 		for ( int i = 1; i < pRope->GetNodeCount(); i++ )
 		{
-			float dist = ( pRope->GetNodePos( i ) - playerMid ).Length();
-			if ( dist < radius && dist < bestDist )
+			Vector toNode = pRope->GetNodePos( i ) - eyePos;
+			float dist = toNode.Length();
+			if ( dist < 1.0f || dist > radius )
+				continue;
+
+			// Pick the node whose direction is most aligned with the player's look direction
+			float dot = DotProduct( eyeDir, toNode / dist );
+			if ( dot > bestDot )
 			{
-				bestDist = dist;
-				pBest    = pRope;
+				bestDot     = dot;
+				pBest       = pRope;
 				m_iGripNode = i;
 			}
 		}
@@ -1183,38 +1191,69 @@ void CHL2_Player::RopeMove( CUserCmd *ucmd )
 		return;
 	}
 
-	// Climb up (forward input, toward anchor)
-	if ( ucmd->forwardmove > 0 && gpGlobals->curtime >= m_flNextClimbTime )
+	// W/S behaviour depends on where the player is looking:
+	//   Looking up   (pitch < -30): W climbs up,   S climbs down
+	//   Looking down (pitch >  30): W climbs down,  S climbs up
+	//   Looking horizontal:         W/S swing forward/backward along facing direction
+	// A/D always apply a lateral swing impulse regardless of look angle.
+	const float flPitch = pl.v_angle[PITCH]; // positive = looking down in Source
+	const float CLIMB_PITCH_THRESHOLD = 30.0f;
+
+	Vector vecForward, vecRight, vecUp;
+	AngleVectors( pl.v_angle, &vecForward, &vecRight, &vecUp );
+
+	if ( flPitch < -CLIMB_PITCH_THRESHOLD || flPitch > CLIMB_PITCH_THRESHOLD )
 	{
-		if ( m_iGripNode > 1 )
+		// Climb mode — W/S move the grip node up or down the rope
+		if ( ucmd->forwardmove != 0 && gpGlobals->curtime >= m_flNextClimbTime )
 		{
-			m_iGripNode--;
-			m_flNextClimbTime = gpGlobals->curtime + 0.1f;
+			// Negative climbDir = toward anchor (node 0) = up
+			int climbDir = ( flPitch < -CLIMB_PITCH_THRESHOLD )
+				? ( ( ucmd->forwardmove > 0 ) ? -1 : 1 )   // looking up:   W up, S down
+				: ( ( ucmd->forwardmove > 0 ) ?  1 : -1 );  // looking down: W down, S up
+
+			int newNode = m_iGripNode + climbDir;
+			if ( newNode >= 1 && newNode < pRope->GetNodeCount() )
+			{
+				m_iGripNode = newNode;
+				m_flNextClimbTime = gpGlobals->curtime + 0.1f;
+			}
 		}
 	}
-	// Climb down (back input, away from anchor)
-	else if ( ucmd->forwardmove < 0 && gpGlobals->curtime >= m_flNextClimbTime )
+	else
 	{
-		if ( m_iGripNode < pRope->GetNodeCount() - 1 )
+		// Swing mode — W/S push the rope forward or backward along the player's facing direction
+		if ( ucmd->forwardmove != 0 )
 		{
-			m_iGripNode++;
-			m_flNextClimbTime = gpGlobals->curtime + 0.1f;
+			float swingForce = ucmd->forwardmove * 0.3f * TICK_INTERVAL;
+			pRope->ApplyNodeImpulse( m_iGripNode, vecForward * swingForce );
 		}
 	}
 
-	// Swing — apply lateral impulse at the grip node
+	// A/D always apply a lateral swing impulse
 	if ( ucmd->sidemove != 0 )
 	{
-		Vector right, forward, up;
-		AngleVectors( pl.v_angle, &forward, &right, &up );
-		float swingForce = ucmd->sidemove * 4.0f * TICK_INTERVAL;
-		pRope->ApplyNodeImpulse( m_iGripNode, right * swingForce );
+		float swingForce = ucmd->sidemove * 0.3f * TICK_INTERVAL;
+		pRope->ApplyNodeImpulse( m_iGripNode, vecRight * swingForce );
 	}
 
-	// Lock player position: eye level at grip node
-	Vector gripPos = pRope->GetNodePos( m_iGripNode );
-	SetAbsOrigin( gripPos - Vector( 0, 0, 60 ) );
+	// Trace to the desired position before committing — prevents clipping through geometry
+	// when the rope swings the player into a wall faster than one hull-width per tick.
+	Vector gripPos  = pRope->GetNodePos( m_iGripNode );
+	Vector newOrigin = gripPos - Vector( 0, 0, 60 );
+	trace_t tr;
+	UTIL_TraceHull( GetAbsOrigin(), newOrigin, GetPlayerMins(), GetPlayerMaxs(),
+	                MASK_PLAYERSOLID, this, COLLISION_GROUP_PLAYER, &tr );
+
+	SetAbsOrigin( tr.endpos );
 	SetAbsVelocity( vec3_origin );
+
+	// If blocked, snap the grip node back to where the player actually ended up.
+	// This stops the rope from pushing the player into the wall again next tick.
+	if ( tr.fraction < 1.0f )
+	{
+		pRope->SnapNodeTo( m_iGripNode, tr.endpos + Vector( 0, 0, 60 ) );
+	}
 }
 
 void CHL2_Player::PlayerRunCommand(CUserCmd *ucmd, IMoveHelper *moveHelper)
