@@ -1193,9 +1193,7 @@ void CHL2_Player::Spawn(void)
 	InitSprinting();
 
 	// Setup our flashlight values
-#ifdef HL2_EPISODIC
-	m_HL2Local.m_flFlashBattery = 100.0f;
-#endif 
+	m_HL2Local.m_flFlashBattery = Flashlight_UseLegacyVersion() ? -1.0f : 100.0f;
 
 	GetPlayerProxy();
 
@@ -2041,6 +2039,21 @@ bool CHL2_Player::ApplyBattery( float powerMultiplier )
 }
 
 //-----------------------------------------------------------------------------
+// Give flashlight battery charge. Returns true if the player actually needed it.
+//-----------------------------------------------------------------------------
+bool CHL2_Player::GiveFlashlightBattery( float flAmount )
+{
+	if ( Flashlight_UseLegacyVersion() )
+		return false;
+
+	if ( m_HL2Local.m_flFlashBattery >= 100.0f )
+		return false;
+
+	m_HL2Local.m_flFlashBattery = clamp( m_HL2Local.m_flFlashBattery + flAmount, 0.0f, 100.0f );
+	return true;
+}
+
+//-----------------------------------------------------------------------------
 //-----------------------------------------------------------------------------
 int CHL2_Player::FlashlightIsOn( void )
 {
@@ -2058,6 +2071,11 @@ void CHL2_Player::FlashlightTurnOn( void )
 	if ( Flashlight_UseLegacyVersion() )
 	{
 		if( !SuitPower_AddDevice( SuitDeviceFlashlight ) )
+			return;
+	}
+	else
+	{
+		if ( m_HL2Local.m_flFlashBattery <= 0.0f )
 			return;
 	}
 #ifdef HL2_DLL
@@ -3279,32 +3297,18 @@ void CHL2_Player::UpdateClientData( void )
 	}
 
 	// Update Flashlight
-#ifdef HL2_EPISODIC
 	if ( Flashlight_UseLegacyVersion() == false )
 	{
 		if ( FlashlightIsOn() && sv_infinite_aux_power.GetBool() == false )
 		{
 			m_HL2Local.m_flFlashBattery -= FLASH_DRAIN_TIME * gpGlobals->frametime;
-			if ( m_HL2Local.m_flFlashBattery < 0.0f )
+			if ( m_HL2Local.m_flFlashBattery <= 0.0f )
 			{
 				FlashlightTurnOff();
 				m_HL2Local.m_flFlashBattery = 0.0f;
 			}
 		}
-		else
-		{
-			m_HL2Local.m_flFlashBattery += FLASH_CHARGE_TIME * gpGlobals->frametime;
-			if ( m_HL2Local.m_flFlashBattery > 100.0f )
-			{
-				m_HL2Local.m_flFlashBattery = 100.0f;
-			}
-		}
 	}
-	else
-	{
-		m_HL2Local.m_flFlashBattery = -1.0f;
-	}
-#endif // HL2_EPISODIC
 
 	BaseClass::UpdateClientData();
 }

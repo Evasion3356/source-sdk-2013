@@ -1222,13 +1222,11 @@ int CHL2MP_Player::FlashlightIsOn( void )
 	return IsEffectActive( EF_DIMLIGHT );
 }
 
-extern ConVar flashlight;
-
 //-----------------------------------------------------------------------------
 //-----------------------------------------------------------------------------
 void CHL2MP_Player::FlashlightTurnOn( void )
 {
-	if( flashlight.GetInt() > 0 && IsAlive() )
+	if( IsAlive() && GetFlashlightBattery() > 0.0f )
 	{
 		AddEffects( EF_DIMLIGHT );
 		EmitSound( "HL2Player.FlashlightOn" );

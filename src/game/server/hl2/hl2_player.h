@@ -143,6 +143,10 @@ public:
 	// Apply a battery
 	bool ApplyBattery( float powerMultiplier = 1.0 );
 
+	// Give flashlight battery charge
+	bool GiveFlashlightBattery( float flAmount );
+	float GetFlashlightBattery( void ) const { return m_HL2Local.m_flFlashBattery; }
+
 	// Commander Mode for controller NPCs
 	enum CommanderCommand_t
 	{
