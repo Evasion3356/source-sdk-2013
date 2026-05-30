@@ -2,9 +2,15 @@
 #include "c_env_rope.h"
 #include "view.h"
 #include "model_types.h"
+#include "datacache/imdlcache.h"
+#include "tier3/tier3.h"
+#include "c_baseanimating.h"
 
 // memdbgon must be the last include file in a .cpp file
 #include "tier0/memdbgon.h"
+
+// The model's geometry runs along its local +Y axis and spans ~10 Source units.
+static const float ROPE_MODEL_LENGTH = 10.0f;
 
 IMPLEMENT_CLIENTCLASS_DT( C_EnvRope, DT_EnvRope, CEnvRope )
 	RecvPropInt(   RECVINFO( m_nActiveNodes ) ),
@@ -41,7 +47,17 @@ void C_EnvRope::OnDataChanged( DataUpdateType_t updateType )
 
 	if ( updateType == DATA_UPDATE_CREATED )
 	{
-		m_RopeMaterial.Init( "cable/cable", TEXTURE_GROUP_OTHER );
+		// Force GPU hardware data upload that DrawModelSetup requires.
+		// C_BaseEntity never calls into the C_BaseAnimating OnNewModel path,
+		// so without this GetHardwareData returns NULL and DrawModelSetup fails.
+		const model_t *pModel = GetModel();
+		if ( pModel )
+		{
+			MDLHandle_t hMDL = modelinfo->GetCacheHandle( pModel );
+			if ( hMDL != MDLHANDLE_INVALID )
+				g_pMDLCache->GetHardwareData( hMDL );
+		}
+
 		AddToLeafSystem( RENDER_GROUP_OPAQUE_ENTITY );
 	}
 }
@@ -67,72 +83,68 @@ int C_EnvRope::DrawModel( int flags )
 	if ( nSegs <= 0 )
 		return 0;
 
-	IMaterial *pMat = m_RopeMaterial;
-	if ( !pMat )
+	const model_t *pModel = GetModel();
+	if ( !pModel )
 		return 0;
 
-	Vector viewOrigin = CurrentViewOrigin();
-	float  halfWidth  = m_flRopeWidth * 0.5f;
+	float white[3] = { 1.0f, 1.0f, 1.0f };
+	render->SetColorModulation( white );
+	render->SetBlend( 1.0f );
 
-	CMatRenderContextPtr pRenderContext( g_pMaterialSystem );
-	pRenderContext->Bind( pMat );
-
-	IMesh *pMesh = pRenderContext->GetDynamicMesh();
-	CMeshBuilder mb;
-	mb.Begin( pMesh, MATERIAL_QUADS, nSegs );
-
-	float totalLength = m_flRopeLength;
-	float accumU = 0.0f;
+	// All bones share the same per-segment transform, bypassing SetupBones
+	// (which would return the entity's anchor origin for every segment).
+	matrix3x4_t boneToWorld[MAXSTUDIOBONES];
 
 	for ( int i = 0; i < nSegs; i++ )
 	{
-		const Vector &posA = m_vecNodes[i];
-		const Vector &posB = m_vecNodes[i + 1];
-
-		// Billboard the segment perpendicular to the view direction
-		Vector seg   = posB - posA;
+		Vector posA   = m_vecNodes[i];
+		Vector posB   = m_vecNodes[i + 1];
+		Vector seg    = posB - posA;
 		float  segLen = seg.Length();
 		if ( segLen < 0.001f )
 			continue;
 
-		Vector segDir = seg / segLen;
-		Vector toView = ( ( posA + posB ) * 0.5f ) - viewOrigin;
-		VectorNormalize( toView );
+		// Align model's local +Y axis to the segment direction and scale to fit.
+		Vector along = seg / segLen;
+		Vector ref   = ( fabsf( along.z ) < 0.9f ) ? Vector( 0, 0, 1 ) : Vector( 1, 0, 0 );
+		Vector worldX = CrossProduct( ref, along );
+		VectorNormalize( worldX );
+		Vector worldZ = CrossProduct( worldX, along );
+		VectorNormalize( worldZ );
 
-		Vector right = CrossProduct( segDir, toView );
-		float rightLen = right.Length();
-		if ( rightLen < 0.001f )
-			continue;
-		right /= rightLen;
-		right *= halfWidth;
+		float s = segLen / ROPE_MODEL_LENGTH;
+		matrix3x4_t mat;
+		mat[0][0] = worldX.x;  mat[0][1] = along.x * s;  mat[0][2] = worldZ.x;  mat[0][3] = posA.x;
+		mat[1][0] = worldX.y;  mat[1][1] = along.y * s;  mat[1][2] = worldZ.y;  mat[1][3] = posA.y;
+		mat[2][0] = worldX.z;  mat[2][1] = along.z * s;  mat[2][2] = worldZ.z;  mat[2][3] = posA.z;
 
-		float u0 = accumU / totalLength;
-		float u1 = ( accumU + segLen ) / totalLength;
-		accumU += segLen;
+		for ( int b = 0; b < MAXSTUDIOBONES; b++ )
+			MatrixCopy( mat, boneToWorld[b] );
 
-		// Quad: A-left, A-right, B-right, B-left
-		mb.Position3fv( ( posA - right ).Base() );
-		mb.TexCoord2f( 0, u0, 0.0f );
-		mb.Color4ub( 255, 255, 255, 255 );
-		mb.AdvanceVertex();
+		QAngle angles;
+		MatrixAngles( mat, angles );
 
-		mb.Position3fv( ( posA + right ).Base() );
-		mb.TexCoord2f( 0, u0, 1.0f );
-		mb.Color4ub( 255, 255, 255, 255 );
-		mb.AdvanceVertex();
+		ClientModelRenderInfo_t info;
+		info.flags           = STUDIO_RENDER;
+		info.pRenderable     = this;
+		info.instance        = MODEL_INSTANCE_INVALID;
+		info.entity_index    = entindex();
+		info.pModel          = pModel;
+		info.origin          = posA;
+		info.angles          = angles;
+		info.skin            = 0;
+		info.body            = 0;
+		info.hitboxset       = 0;
+		info.pLightingOffset = NULL;
+		info.pLightingOrigin = NULL;
+		info.modelToWorld    = mat;
+		info.pModelToWorld   = &info.modelToWorld;
 
-		mb.Position3fv( ( posB + right ).Base() );
-		mb.TexCoord2f( 0, u1, 1.0f );
-		mb.Color4ub( 255, 255, 255, 255 );
-		mb.AdvanceVertex();
-
-		mb.Position3fv( ( posB - right ).Base() );
-		mb.TexCoord2f( 0, u1, 0.0f );
-		mb.Color4ub( 255, 255, 255, 255 );
-		mb.AdvanceVertex();
+		DrawModelState_t state;
+		matrix3x4_t *pBoneOut;
+		if ( modelrender->DrawModelSetup( info, &state, boneToWorld, &pBoneOut ) )
+			modelrender->DrawModelExecute( state, info, boneToWorld );
 	}
 
-	mb.End();
-	pMesh->Draw();
 	return 1;
 }

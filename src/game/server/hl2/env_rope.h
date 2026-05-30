@@ -14,6 +14,7 @@ public:
 	DECLARE_DATADESC();
 	DECLARE_SERVERCLASS();
 
+	void Precache() override;
 	void Spawn() override;
 	void Think() override;
 	int  UpdateTransmitState() override;

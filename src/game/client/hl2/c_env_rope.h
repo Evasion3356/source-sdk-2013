@@ -3,7 +3,6 @@
 #pragma once
 
 #include "c_baseentity.h"
-#include "materialsystem/MaterialSystemUtil.h"
 
 #define ROPE_MAX_NODES 16
 
@@ -26,7 +25,6 @@ private:
 	float   m_flRopeLength;
 	float   m_flRopeWidth;
 
-	CMaterialReference m_RopeMaterial;
 };
 
 #endif // C_ENV_ROPE_H

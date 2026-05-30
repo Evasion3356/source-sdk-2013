@@ -37,8 +37,15 @@ IMPLEMENT_SERVERCLASS_ST( CEnvRope, DT_EnvRope )
 	SendPropVector( SENDINFO_NETWORKARRAYELEM( m_vecNodes, 15 ), -1, SPROP_COORD ),
 END_SEND_TABLE()
 
+void CEnvRope::Precache()
+{
+	PrecacheModel( "models/props_shared/ropes/gameplay_rope_10.mdl" );
+	BaseClass::Precache();
+}
+
 void CEnvRope::Spawn()
 {
+	Precache();
 	BaseClass::Spawn();
 
 	// Defaults for any keyfields not set in Hammer
@@ -46,6 +53,9 @@ void CEnvRope::Spawn()
 	if ( m_flRopeWidth  <= 0.0f )  m_flRopeWidth   = 2.0f;
 	if ( m_nSubdivisions < 2 )     m_nSubdivisions = 8;
 	if ( m_flAttachRadius <= 0.0f) m_flAttachRadius = 48.0f;
+
+	SetModel( "models/props_shared/ropes/gameplay_rope_10.mdl" );
+	SetSolid( SOLID_NONE );
 
 	InitNodes();
 
