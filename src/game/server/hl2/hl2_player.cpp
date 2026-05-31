@@ -1246,8 +1246,10 @@ void CHL2_Player::RopeMove( CUserCmd *ucmd )
 
 	// Trace to the desired position before committing — prevents clipping through geometry
 	// when the rope swings the player into a wall faster than one hull-width per tick.
-	Vector gripPos  = pRope->GetNodePos( m_iGripNode );
-	Vector newOrigin = gripPos - Vector( 0, 0, 60 );
+	// Offset the player to the right of the rope so the rope mesh never intersects the hull.
+	const float ROPE_HAND_OFFSET = 20.0f;
+	Vector gripPos   = pRope->GetNodePos( m_iGripNode );
+	Vector newOrigin = gripPos + vecRight * ROPE_HAND_OFFSET - Vector( 0, 0, 60 );
 	trace_t tr;
 	UTIL_TraceHull( GetAbsOrigin(), newOrigin, GetPlayerMins(), GetPlayerMaxs(),
 	                MASK_PLAYERSOLID, this, COLLISION_GROUP_PLAYER, &tr );
@@ -1260,7 +1262,7 @@ void CHL2_Player::RopeMove( CUserCmd *ucmd )
 	// preserving tangential velocity so pendulum momentum carries through.
 	if ( tr.fraction < 1.0f )
 	{
-		pRope->SnapNodeTo( m_iGripNode, tr.endpos + Vector( 0, 0, 60 ), tr.plane.normal );
+		pRope->SnapNodeTo( m_iGripNode, tr.endpos - vecRight * ROPE_HAND_OFFSET + Vector( 0, 0, 60 ), tr.plane.normal );
 	}
 }
 
